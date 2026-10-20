@@ -1,0 +1,569 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SeedVR2 Tester</title>
+<style>
+  :root { --bg:#111418; --panel:#1a1f26; --line:#2a313b; --text:#e6e9ee; --muted:#8b95a3; --accent:#4f9cff; --ok:#3fb950; --err:#f85149; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font:14px/1.45 system-ui, sans-serif; }
+  header { padding:14px 20px; border-bottom:1px solid var(--line); display:flex; gap:12px; align-items:baseline; }
+  header h1 { font-size:17px; margin:0; } header span { color:var(--muted); font-size:12px; }
+  main { display:grid; grid-template-columns:320px 1fr; gap:16px; padding:16px 20px; }
+  @media (max-width:900px) { main { grid-template-columns:1fr; } }
+  .panel { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:14px; }
+  label { display:block; color:var(--muted); font-size:12px; margin:10px 0 4px; }
+  input, select { width:100%; background:var(--bg); color:var(--text); border:1px solid var(--line); border-radius:5px; padding:7px 8px; font:inherit; }
+  input[type=checkbox] { width:auto; }
+  .row { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+  button { background:var(--accent); color:#fff; border:0; border-radius:6px; padding:9px 14px; font:inherit; font-weight:600; cursor:pointer; }
+  button:disabled { opacity:.5; cursor:default; }
+  button.ghost { background:transparent; border:1px solid var(--line); color:var(--text); font-weight:500; }
+  #run { width:100%; margin-top:14px; }
+  #drop { border:2px dashed var(--line); border-radius:8px; padding:18px; text-align:center; color:var(--muted); cursor:pointer; }
+  #drop.has { border-color:var(--accent); color:var(--text); }
+  #status { margin-top:10px; font-size:13px; }
+  .tabs { display:flex; gap:6px; margin-bottom:10px; flex-wrap:wrap; }
+  .tabs button { padding:6px 12px; }
+  .tabs button:not(.on) { background:transparent; border:1px solid var(--line); color:var(--muted); font-weight:500; }
+  /* image compare slider */
+  .cmp { position:relative; width:100%; overflow:hidden; background:#000; border-radius:6px; user-select:none; touch-action:none; }
+  .cmp img { display:block; width:100%; height:auto; image-rendering:auto; }
+  .cmp .top { position:absolute; inset:0; clip-path:inset(0 50% 0 0); }
+  .cmp .top img { height:100%; object-fit:fill; }
+  .cmp .bar { position:absolute; top:0; bottom:0; width:2px; background:#fff; left:50%; cursor:ew-resize; box-shadow:0 0 4px #000; }
+  .cmp .tag { position:absolute; top:8px; padding:2px 8px; background:#000a; border-radius:4px; font-size:12px; }
+  .pixelated img { image-rendering:pixelated; }
+  /* side-by-side */
+  .sbs { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+  .sbs figure { margin:0; } .sbs figcaption { color:var(--muted); font-size:12px; margin-bottom:4px; }
+  .sbs img, .sbs video { width:100%; background:#000; border-radius:6px; display:block; }
+  .zoomwrap { overflow:hidden; border-radius:6px; background:#000; aspect-ratio:1; position:relative; }
+  .zoomwrap img { position:absolute; transform-origin:0 0; max-width:none; width:auto; image-rendering:pixelated; }
+  .vctl { display:flex; gap:10px; align-items:center; margin-top:10px; }
+  .vctl input[type=range] { flex:1; }
+  .mono { font-family:ui-monospace, monospace; font-size:12px; }
+  table { width:100%; border-collapse:collapse; font-size:13px; }
+  th, td { text-align:left; padding:5px 8px; border-bottom:1px solid var(--line); }
+  th { color:var(--muted); font-weight:500; }
+  td.num { font-variant-numeric:tabular-nums; }
+  .chg { color:var(--accent); }
+  pre#log { background:#0b0d10; border-radius:6px; padding:10px; max-height:260px; overflow:auto; white-space:pre-wrap; margin:0; }
+  details summary { cursor:pointer; color:var(--muted); margin:6px 0; }
+  .hidden { display:none !important; }
+  .stack > * + * { margin-top:16px; }
+  .hint { color:var(--muted); font-size:12px; }
+  #quality { margin-top:12px; }
+  .qhead { display:flex; justify-content:space-between; align-items:center; gap:8px; }
+  .badge { font-size:11px; padding:2px 8px; border-radius:10px; font-weight:600; }
+  .b-Good, .b-good { background:#3fb95026; color:var(--ok); }
+  .b-Fair, .b-ok { background:#d2992226; color:#d29922; }
+  .b-Poor, .b-risky { background:#f8514926; color:var(--err); }
+  .b-fix { background:#4f9cff26; color:var(--accent); }
+  .qgrid { display:grid; grid-template-columns:auto 1fr; gap:2px 10px; font-size:12px; margin:8px 0; }
+  .qgrid span:nth-child(odd) { color:var(--muted); }
+  .issues { margin:6px 0; padding-left:18px; font-size:12px; color:#d29922; }
+  .targets { display:flex; flex-direction:column; gap:6px; margin-top:8px; }
+  .target { text-align:left; background:var(--bg); border:1px solid var(--line); color:var(--text); font-weight:400; padding:7px 9px; border-radius:6px; }
+  .target.sel { border-color:var(--accent); box-shadow:0 0 0 1px var(--accent) inset; }
+  .target b { font-weight:600; } .target small { color:var(--muted); display:block; }
+  .target .warn { color:#d29922; }
+  .advice { font-size:12px; margin:8px 0 0; padding-left:18px; }
+  .est { display:flex; flex-wrap:wrap; gap:4px 10px; font-size:11px; color:var(--muted); margin-top:3px; }
+  .est b { color:var(--text); font-weight:600; }
+  .lim { font-size:11px; color:#d29922; margin:3px 0 0; padding-left:16px; }
+  .blk { color:var(--err); }
+  #plan { margin-top:12px; border:1px solid var(--line); border-radius:6px; padding:10px; font-size:12px; }
+  #plan h4, .panel h4 { margin:0 0 6px; font-size:13px; }
+  .kv { display:grid; grid-template-columns:auto 1fr; gap:2px 10px; }
+  .kv span:nth-child(odd) { color:var(--muted); }
+  .caps { font-size:12px; margin:6px 0 0; padding-left:18px; color:var(--muted); }
+  .bar2 { height:8px; background:var(--bg); border-radius:4px; overflow:hidden; border:1px solid var(--line); }
+  .bar2 > div { height:100%; background:var(--accent); transition:width .5s; }
+  .bar2.warn > div { background:#d29922; } .bar2.bad > div { background:var(--err); }
+  .meters { display:grid; grid-template-columns:repeat(auto-fit, minmax(150px, 1fr)); gap:10px; margin-top:10px; font-size:12px; }
+  .meters label { margin:0 0 3px; }
+  .jobhead { display:flex; justify-content:space-between; align-items:center; gap:8px; flex-wrap:wrap; }
+  .actions { display:flex; gap:6px; flex-wrap:wrap; }
+  .actions button { padding:6px 12px; }
+  button.danger { background:transparent; border:1px solid var(--err); color:var(--err); font-weight:500; }
+  .s-done { background:#3fb95026; color:var(--ok); } .s-running, .s-finalizing { background:#4f9cff26; color:var(--accent); }
+  .s-queued { background:#8b95a326; color:var(--muted); } .s-error { background:#f8514926; color:var(--err); }
+  .s-stopped, .s-interrupted { background:#d2992226; color:#d29922; }
+  #history { max-height:320px; overflow:auto; }
+  .hrow { display:grid; grid-template-columns:auto 1fr auto; gap:8px; align-items:center; padding:6px 4px; border-bottom:1px solid var(--line); cursor:pointer; font-size:12px; }
+  .hrow:hover { background:#ffffff08; } .hrow.sel { background:#4f9cff14; }
+  .hrow .f { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .hrow small { color:var(--muted); display:block; }
+</style>
+</head>
+<body>
+<header><h1>SeedVR2 Tester</h1><span>upload → upscale → compare</span></header>
+<main>
+  <section class="panel">
+    <div id="drop">Drop an image or video here<br><small>or click to choose</small></div>
+    <input id="file" type="file" accept="image/*,video/*" class="hidden">
+    <div id="quality" class="hidden"></div>
+
+    <label>Model</label>
+    <select id="dit_model"></select>
+    <div class="row">
+      <div><label>Target resolution</label><select id="resolution"></select></div>
+      <div><label>Long-edge cap</label><select id="max_resolution">
+        <option value="0" selected>Off</option><option value="1280">1280 px (HD)</option><option value="1920">1920 px (Full HD)</option>
+        <option value="2560">2560 px (QHD)</option><option value="3840">3840 px (4K)</option></select></div>
+    </div>
+    <div class="row">
+      <div><label>Color correction</label>
+        <select id="color_correction"><option>lab</option><option>wavelet</option><option>wavelet_adaptive</option><option>hsv</option><option>adain</option><option>none</option></select></div>
+      <div><label>Seed</label><input id="seed" type="number" value="42"></div>
+    </div>
+    <div class="row">
+      <div><label>Blocks to swap (0–36)</label><input id="blocks_to_swap" type="number" value="36" min="0" max="36"></div>
+      <div><label>Batch size (video)</label><select id="batch_size">
+        <option>1</option><option selected>5</option><option>9</option><option>13</option><option>17</option><option>21</option></select></div>
+    </div>
+    <div class="row">
+      <div><label>Video frames</label><select id="load_cap">
+        <option value="0" selected>All</option><option value="9">First 9 (quick test)</option><option value="17">First 17</option>
+        <option value="33">First 33</option><option value="65">First 65</option></select></div>
+      <div><label>VAE tiling</label><input id="vae_tiled" type="checkbox" checked></div>
+    </div>
+    <div class="row">
+      <div><label>Chunk size (video)</label><select id="chunk_size" title="Video is processed in pieces of this many frames so RAM stays bounded – any length works">
+        <option value="0" selected>Auto (fit free RAM)</option><option value="20">20 frames</option><option value="40">40 frames</option>
+        <option value="60">60 frames</option><option value="100">100 frames</option></select></div>
+    </div>
+    <label>Extra CLI args</label>
+    <input id="extra_args" class="mono" placeholder="e.g. --debug --attention_mode sageattn_2">
+    <div id="plan" class="hidden"></div>
+    <button id="run" disabled>Start</button>
+    <div id="status" class="hint">Choose a file to start. 16 GB GPU: keep blocks_to_swap high for 7B FP16.</div>
+  </section>
+
+  <section class="stack">
+    <div class="panel hidden" id="jobPanel">
+      <div class="jobhead">
+        <div><b id="jobTitle"></b> <span id="jobBadge" class="badge"></span></div>
+        <div class="actions">
+          <button class="ghost hidden" id="btnStop">■ Stop</button>
+          <button class="hidden" id="btnResume">▶ Resume</button>
+          <button class="ghost" id="btnReuse" title="Load this job's input and settings into the form">Load input</button>
+          <button class="danger hidden" id="btnDelete">Delete</button>
+        </div>
+      </div>
+      <div id="jobMsg" class="hint" style="margin:6px 0"></div>
+      <div class="bar2" id="jobBar"><div style="width:0"></div></div>
+      <div class="kv" id="jobKv" style="margin-top:8px;font-size:12px"></div>
+      <div class="meters" id="meters"></div>
+    </div>
+
+    <div class="panel">
+      <div class="jobhead"><h4>History</h4><span class="hint">saved on disk · survives restarts</span></div>
+      <div id="history"><p class="hint">No runs yet.</p></div>
+    </div>
+
+    <div class="panel" id="viewer">
+      <div class="tabs" id="tabs"></div>
+      <div id="view"><p class="hint">Results will appear here.</p></div>
+    </div>
+
+    <div class="panel hidden" id="metaPanel">
+      <table id="metaTable"></table>
+      <h4 style="margin:16px 0 6px">Run stats</h4>
+      <table id="statsTable"></table>
+      <details><summary>Command</summary><div id="cmd" class="mono"></div></details>
+    </div>
+
+    <div class="panel">
+      <details id="logBox"><summary>Log</summary><pre id="log" class="mono"></pre></details>
+    </div>
+  </section>
+</main>
+
+<script>
+const $ = id => document.getElementById(id);
+let file = null, job = null, timer = null;
+
+// ---------- setup ----------
+fetch('/api/models').then(r => r.json()).then(ms => {
+  $('dit_model').innerHTML = ms.map(m =>
+    `<option value="${m.name}" ${m.name === 'seedvr2_ema_7b_fp16.safetensors' ? 'selected' : ''}>${m.name}${m.downloaded ? '' : '  (will download)'}</option>`).join('');
+});
+
+const TIERS = [[240,'240p'],[360,'360p SD'],[480,'480p SD'],[720,'720p HD'],[1080,'1080p Full HD'],[1440,'1440p QHD / 2K'],[2160,'2160p 4K UHD']];
+let upload = null;
+function fillResolutions(targets) {
+  const opts = targets
+    ? targets.map(t => [t.res, `${t.label} — ${t.out_w}×${t.out_h} (${t.scale}×)${t.recommended ? ' ★' : ''}`, t.recommended])
+    : TIERS.map(([px, l]) => [px, l, px === 1080]);
+  $('resolution').innerHTML = opts.map(([v, l, sel]) => `<option value="${v}" ${sel ? 'selected' : ''}>${l}</option>`).join('');
+  markTarget();
+}
+function markTarget() { document.querySelectorAll('.target').forEach(b => b.classList.toggle('sel', b.dataset.res === $('resolution').value)); }
+$('resolution').onchange = markTarget;
+fillResolutions();
+
+$('drop').onclick = () => $('file').click();
+$('drop').ondragover = e => { e.preventDefault(); };
+$('drop').ondrop = e => { e.preventDefault(); setFile(e.dataTransfer.files[0]); };
+$('file').onchange = e => setFile(e.target.files[0]);
+async function setFile(f) {
+  if (!f) return;
+  file = f; upload = null;
+  $('drop').classList.add('has');
+  $('drop').innerHTML = `<b>${f.name}</b><br><small>${(f.size / 1e6).toFixed(2)} MB · ${f.type || 'unknown'}</small>`;
+  $('run').disabled = true;
+  $('quality').classList.remove('hidden');
+  $('quality').innerHTML = '<p class="hint">Analysing quality…</p>';
+  const fd = new FormData(); fd.append('file', f);
+  const r = await fetch('/api/upload', { method: 'POST', body: fd });
+  if (!r.ok) { $('quality').innerHTML = `<p style="color:var(--err)">${await r.text()}</p>`; return; }
+  upload = await r.json();
+  renderQuality(upload.analysis);
+  $('run').disabled = false;
+  refreshPlan();
+}
+
+function renderQuality(a) {
+  if (!a || !a.tier) { $('quality').innerHTML = '<p class="hint">Could not analyse this file.</p>'; fillResolutions(); return; }
+  const m = a.meta, isVid = m.fps != null;
+  const rows = [
+    ['Resolution', `${m.width}×${m.height} (${a.orientation})`],
+    ['Quality tier', a.tier],
+    isVid && ['Video', `${m.fps} fps · ${m.frames ?? '?'} frames · ${m.duration_s}s · ${m.bitrate_kbps ?? '?'} kbps`],
+    ['Compression', `${a.compression} (${a.bits_per_pixel} bits/pixel)`],
+    ['Sharpness', `${a.sharpness_label} (${a.sharpness})`],
+    ['Noise', `${a.noise_label} (σ ${a.noise_sigma})`],
+    ['Block artifacts', a.blockiness > 1.25 ? 'visible' : a.blockiness > 1.1 ? 'mild' : 'none'],
+  ].filter(Boolean);
+  $('quality').innerHTML = `
+    <div class="qhead"><b>Input quality</b><span class="badge b-${a.overall}">${a.overall}</span></div>
+    <div class="qgrid">${rows.map(([k, v]) => `<span>${k}</span><span>${v}</span>`).join('')}</div>
+    ${a.issues.length ? `<ul class="issues">${a.issues.map(i => `<li>${i}</li>`).join('')}</ul>` : ''}
+    <b style="font-size:13px">Upscale options</b>
+    <div class="targets">${a.targets.map(t => `
+      <button class="target" data-res="${t.res}">
+        <b>${t.label}</b> → ${t.out_w}×${t.out_h} · ${t.scale}× ${t.recommended ? '<span class="badge b-good">Recommended</span>' : `<span class="badge b-${t.tag}">${{fix:'cleanup',good:'safe',ok:'big jump',risky:'risky'}[t.tag]}</span>`}
+        <small>${t.note}${t.warn ? ` · <span class="warn">${t.warn}</span>` : ''}</small>
+        ${t.estimate ? estLine(t.estimate) : ''}
+        ${t.estimate ? limList(t.estimate) : ''}
+      </button>`).join('')}</div>
+    <p class="hint" style="margin:6px 0 0">Estimates use the default settings (7B FP16, batch 5, swap 36) and refine themselves from finished runs.</p>
+    <ul class="advice">${a.advice.map(x => `<li>${x}</li>`).join('')}</ul>
+    ${a.capabilities ? `<details><summary>What can be done with this file</summary><ul class="caps">${a.capabilities.map(x => `<li>${x}</li>`).join('')}</ul></details>` : ''}`;
+  fillResolutions(a.targets);
+  document.querySelectorAll('.target').forEach(b => b.onclick = () => { $('resolution').value = b.dataset.res; markTarget(); refreshPlan(); });
+}
+const gb = x => `${x} GB`;
+function estLine(e) {
+  return `<div class="est"><span>⏱ <b>${e.time}</b>${e.sec_per_frame ? ` (${e.sec_per_frame}s/frame)` : ''}</span>
+    <span>RAM <b>${gb(e.ram_peak_gb)}</b>/${e.ram_total_gb}</span><span>VRAM <b>${gb(e.vram_gb)}</b>/${e.vram_total_gb}</span>
+    <span>Output <b>${e.output_gb < 0.1 ? Math.round(e.output_gb * 1024) + ' MB' : gb(e.output_gb)}</b></span></div>`;
+}
+function limList(e) {
+  const items = [...e.blockers.map(x => `<li class="blk">${x}</li>`), ...e.limits.map(x => `<li>${x}</li>`)];
+  return items.length ? `<ul class="lim">${items.join('')}</ul>` : '';
+}
+
+// ---------- live plan for the chosen settings ----------
+const PLAN_KEYS = ['dit_model','resolution','max_resolution','batch_size','blocks_to_swap','load_cap','chunk_size'];
+let planTimer = null;
+function refreshPlan() {
+  clearTimeout(planTimer);
+  planTimer = setTimeout(async () => {
+    if (!upload) return;
+    const fd = new FormData(); fd.append('upload_id', upload.upload_id);
+    for (const k of PLAN_KEYS) fd.append(k, $(k).value);
+    fd.append('vae_tiled', $('vae_tiled').checked);
+    const r = await fetch('/api/estimate', { method: 'POST', body: fd });
+    if (!r.ok) return;
+    const e = await r.json(), vid = e.chunks != null;
+    $('plan').classList.remove('hidden');
+    $('plan').innerHTML = `<h4>Plan for these settings ${e.ok ? '' : '<span class="badge b-Poor">blocked</span>'}</h4>
+      <div class="kv">
+        <span>Output</span><span>${e.out_w}×${e.out_h} (${e.megapixels} MP, ${e.scale}×)${vid ? ` · ${e.frames} frames` : ''}</span>
+        <span>Time</span><span><b>≈ ${e.time}</b> (model load ≈${e.model_load_s}s${e.cold_load ? ', first load from disk' : ''})</span>
+        ${vid ? `<span>Chunks</span><span>${e.chunks} × ${e.chunk_size} frames · ${e.batches} batches · overlap ${e.temporal_overlap}</span>` : ''}
+        <span>RAM peak</span><span>≈ ${gb(e.ram_peak_gb)} (model ${gb(e.ram_model_gb)}) · free ${gb(e.ram_free_gb)} of ${gb(e.ram_total_gb)}</span>
+        <span>VRAM peak</span><span>≈ ${gb(e.vram_gb)} of ${gb(e.vram_total_gb)}</span>
+        <span>Disk</span><span>output ≈ ${gb(e.output_gb)}${vid ? ` + temp ≈ ${gb(e.temp_disk_gb)}` : ''} · free ${gb(e.disk_free_gb)}</span>
+      </div>${limList(e)}`;
+    $('run').disabled = !e.ok;
+  }, 250);
+}
+for (const k of [...PLAN_KEYS, 'vae_tiled']) $(k).addEventListener('change', refreshPlan);
+
+// ---------- start + live job tracking ----------
+let current = localStorage.getItem('seedvr2.job') || null, renderedId = null, runs = [];
+$('run').onclick = async () => {
+  if (!upload) return;
+  const fd = new FormData();
+  fd.append('upload_id', upload.upload_id);
+  fd.append('filename', upload.filename);
+  for (const k of ['dit_model','resolution','max_resolution','batch_size','seed','color_correction','blocks_to_swap','load_cap','chunk_size','extra_args'])
+    fd.append(k, $(k).value);
+  fd.append('vae_tiled', $('vae_tiled').checked);
+  $('run').disabled = true;
+  setStatus('Starting…');
+  const r = await fetch('/api/run', { method: 'POST', body: fd });
+  $('run').disabled = false;
+  if (!r.ok) { setStatus('Error: ' + ((await r.json().catch(() => null))?.detail || r.statusText), 'err'); return; }
+  const { id } = await r.json();
+  setStatus('Queued – progress is shown on the right.', 'ok');
+  $('logBox').open = true;
+  select(id);
+};
+function setStatus(t, cls) { $('status').textContent = t; $('status').style.color = cls === 'ok' ? 'var(--ok)' : cls === 'err' ? 'var(--err)' : ''; }
+
+function select(id) {
+  current = id; renderedId = null;
+  try { localStorage.setItem('seedvr2.job', id); } catch {}
+  $('view').innerHTML = '<p class="hint">Results will appear here.</p>'; $('tabs').innerHTML = '';
+  $('metaPanel').classList.add('hidden');
+  renderHistory(); poll();
+}
+
+const fmtS = s => s == null ? '–' : s >= 3600 ? `${Math.floor(s / 3600)}h ${Math.floor(s % 3600 / 60)}m` : s >= 60 ? `${Math.floor(s / 60)}m ${Math.round(s % 60)}s` : `${Math.round(s)}s`;
+const ACTIVE = ['queued', 'running', 'finalizing'];
+
+async function poll() {
+  if (!current) return;
+  const r = await fetch('/api/job/' + current);
+  if (!r.ok) { current = null; $('jobPanel').classList.add('hidden'); return; }
+  job = await r.json();
+  const log = $('log'), atBottom = log.scrollTop + log.clientHeight >= log.scrollHeight - 20;
+  log.textContent = job.log;
+  if (atBottom) log.scrollTop = log.scrollHeight;
+  renderJob();
+  if (job.status === 'done' && renderedId !== job.id && job.output_url) { renderedId = job.id; render(); }
+}
+
+function renderJob() {
+  const j = job, p = j.progress || {}, prm = j.params || {}, e = j.estimate || {}, st = j.stats || {};
+  $('jobPanel').classList.remove('hidden');
+  $('jobTitle').textContent = `${prm.file || j.id}`;
+  $('jobBadge').className = `badge s-${j.status}`; $('jobBadge').textContent = j.status;
+  $('btnStop').classList.toggle('hidden', !['queued', 'running'].includes(j.status));
+  $('btnResume').classList.toggle('hidden', !j.resumable);
+  $('btnDelete').classList.toggle('hidden', ACTIVE.includes(j.status));
+  const running = ACTIVE.includes(j.status);
+  const started = p.attempt_started || j.started;
+  const elapsed = running && started ? (Date.now() / 1000 - started) : null;
+  let pct = 0;
+  if (j.status === 'done') pct = 100;
+  else if (p.percent != null) pct = p.percent;
+  else if (p.frames_total) pct = 100 * (p.frames_done || 0) / p.frames_total;
+  else if (running && e.time_s && elapsed) pct = Math.min(95, 100 * elapsed / e.time_s);
+  $('jobBar').firstElementChild.style.width = pct.toFixed(1) + '%';
+  $('jobMsg').innerHTML = j.error ? `<span style="color:var(--err)">${j.error}</span>`
+    : j.status === 'queued' ? `Waiting for the GPU${j.queue_position ? ` (position ${j.queue_position})` : ''}…`
+    : j.status === 'stopped' ? 'Stopped. Finished frames are kept – Resume continues where it left off.'
+    : j.status === 'done' ? `Finished in ${fmtS(st.elapsed_s)}${j.estimate_s ? ` (estimated ${fmtS(j.estimate_s)})` : ''}.` : '';
+  const rows = [
+    ['Settings', `${prm.dit_model || ''} · ${prm.resolution}p${prm.batch_size ? ` · batch ${prm.batch_size}` : ''}`],
+    prm.out_w && ['Output', `${prm.out_w}×${prm.out_h}`],
+    p.frames_total && ['Frames saved', `${p.frames_done || 0} / ${p.frames_total} · overall ${pct.toFixed(1)}%`],
+    p.chunk && ['Chunk', `${p.chunk} / ${p.chunks} (${prm.chunk_size} frames each)`],
+    p.phase && running && ['Phase', `${p.phase}${p.step ? ' · ' + p.step : ''}`],
+    ['Elapsed', running ? fmtS((st.elapsed_s || 0) + (elapsed || 0)) : fmtS(st.elapsed_s)],
+    running && ['Remaining', p.eta_s != null ? `${fmtS(p.eta_s)}${p.eta_is_estimate ? ' (estimate)' : ''}` : '–'],
+    p.sec_per_frame && running && ['Speed', `${p.sec_per_frame} s/frame`],
+    st.peak_gpu_vram_mb && ['Peak VRAM', `${(st.peak_gpu_vram_mb / 1024).toFixed(1)} GB`],
+    j.ram_limit_gb && ['RAM limit', `${j.ram_limit_gb} GB (job is killed instead of freezing the PC)`],
+  ].filter(Boolean);
+  $('jobKv').innerHTML = rows.map(([k, v]) => `<span>${k}</span><span>${v}</span>`).join('');
+}
+
+function meter(label, used, total, extra = '') {
+  const f = total ? used / total : 0;
+  return `<div><label>${label}: ${used} / ${total} ${extra}</label><div class="bar2 ${f > .92 ? 'bad' : f > .8 ? 'warn' : ''}"><div style="width:${Math.min(100, f * 100)}%"></div></div></div>`;
+}
+async function pollSystem() {
+  const s = await (await fetch('/api/system')).json();
+  $('meters').innerHTML = meter('RAM', s.ram_used_gb, s.ram_total_gb, `GB${s.job_ram_gb ? ` · job ${s.job_ram_gb}` : ''}`)
+    + (s.vram_total_gb ? meter('VRAM', s.vram_used_gb, s.vram_total_gb, 'GB') : '')
+    + (s.gpu_util != null ? meter('GPU', s.gpu_util, 100, `% · ${s.gpu_temp}°C`) : '')
+    + meter('Swap used', s.swap_used_gb, 8, 'GB');
+}
+
+async function loadHistory() {
+  runs = await (await fetch('/api/jobs')).json();
+  if (!current) { const a = runs.find(h => ACTIVE.includes(h.status)); if (a) return select(a.id); }
+  renderHistory();
+}
+function renderHistory() {
+  if (!runs.length) return;
+  $('history').innerHTML = runs.map(h => {
+    const p = h.progress || {}, frames = p.frames_total ? ` · ${p.frames_done || 0}/${p.frames_total} fr` : '';
+    const when = h.created ? new Date(h.created * 1000).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
+    return `<div class="hrow ${h.id === current ? 'sel' : ''}" data-id="${h.id}">
+      <span>${h.type === 'video' ? '🎞' : '🖼'}</span>
+      <div class="f">${h.file || h.id}<small>${when} · ${h.resolution ? h.resolution + 'p' : ''}${frames}${h.elapsed_s ? ' · ' + fmtS(h.elapsed_s) : ''}</small></div>
+      <span class="badge s-${h.status}">${h.status}</span></div>`;
+  }).join('');
+  $('history').querySelectorAll('.hrow').forEach(r => r.onclick = () => select(r.dataset.id));
+}
+
+const act = async (path, method = 'POST') => {
+  const r = await fetch(`/api/job/${current}${path}`, { method });
+  if (!r.ok) setStatus((await r.json().catch(() => ({}))).detail || 'Request failed', 'err');
+  return r.ok;
+};
+$('btnStop').onclick = async () => { $('btnStop').disabled = true; await act('/stop'); setTimeout(() => $('btnStop').disabled = false, 3000); poll(); };
+$('btnResume').onclick = async () => { await act('/resume'); poll(); loadHistory(); };
+$('btnDelete').onclick = async () => {
+  const b = $('btnDelete');
+  if (!b.dataset.armed) { b.dataset.armed = 1; b.textContent = 'Click again to delete'; setTimeout(() => { delete b.dataset.armed; b.textContent = 'Delete'; }, 3000); return; }
+  if (await act('', 'DELETE')) {
+    current = null; try { localStorage.removeItem('seedvr2.job'); } catch {}
+    $('jobPanel').classList.add('hidden'); $('view').innerHTML = '<p class="hint">Results will appear here.</p>'; $('tabs').innerHTML = '';
+    $('metaPanel').classList.add('hidden'); loadHistory();
+  }
+};
+$('btnReuse').onclick = async () => {
+  const r = await fetch(`/api/job/${current}/reuse`, { method: 'POST' });
+  if (!r.ok) return setStatus((await r.json()).detail, 'err');
+  upload = await r.json();
+  $('drop').classList.add('has');
+  $('drop').innerHTML = `<b>${upload.filename}</b><br><small>loaded from history</small>`;
+  $('quality').classList.remove('hidden');
+  renderQuality(upload.analysis);
+  const p = upload.params || {};
+  for (const k of ['dit_model','resolution','max_resolution','batch_size','seed','color_correction','blocks_to_swap','load_cap','extra_args'])
+    if (p[k] != null && ($(k).tagName !== 'SELECT' || [...$(k).options].some(o => o.value === String(p[k])))) $(k).value = p[k];
+  if (p.vae_tiled != null) $('vae_tiled').checked = p.vae_tiled;
+  $('run').disabled = false; refreshPlan(); setStatus('Input loaded – adjust settings and press Start.');
+};
+
+setInterval(() => { if (current) poll(); }, 1500);
+setInterval(pollSystem, 2000);
+setInterval(loadHistory, 5000);
+pollSystem(); loadHistory(); if (current) poll();
+
+// ---------- render ----------
+function render() {
+  const isVideo = job.type === 'video';
+  const tabs = isVideo ? ['Synced side-by-side', 'Wipe'] : ['Slider', 'Slider vs bicubic', 'Side-by-side', 'Zoom', 'Diff heatmap'];
+  $('tabs').innerHTML = tabs.map((t, i) => `<button class="${i ? '' : 'on'}" data-i="${i}">${t}</button>`).join('');
+  $('tabs').querySelectorAll('button').forEach(b => b.onclick = () => {
+    $('tabs').querySelectorAll('button').forEach(x => x.classList.toggle('on', x === b));
+    show(tabs[b.dataset.i]);
+  });
+  show(tabs[0]);
+  renderMeta();
+}
+
+const bust = u => u + '?t=' + job.id;
+function show(tab) {
+  const v = $('view'), inp = bust(job.input_url), out = bust(job.output_url);
+  if (tab === 'Slider') v.innerHTML = slider(inp, out, 'Input', 'SeedVR2', true);
+  else if (tab === 'Slider vs bicubic') v.innerHTML = slider(bust(job.bicubic_url), out, 'Bicubic', 'SeedVR2');
+  else if (tab === 'Side-by-side') v.innerHTML = `<div class="sbs"><figure><figcaption>Input</figcaption><img src="${inp}"></figure><figure><figcaption>Output</figcaption><img src="${out}"></figure></div>`;
+  else if (tab === 'Diff heatmap') v.innerHTML = `<p class="hint">|output − bicubic(input)| in grayscale, normalized. Bright = where the model changed the most.</p><img src="${bust(job.diff_url)}" style="width:100%;border-radius:6px">`;
+  else if (tab === 'Zoom') return zoomView(v, inp, out);
+  else if (tab === 'Synced side-by-side') return syncedVideos(v, inp, out);
+  else if (tab === 'Wipe') return videoWipe(v, inp, out);
+  v.querySelectorAll('.cmp').forEach(bindSlider);
+}
+
+// Input is drawn stretched over the output, so the wipe lines up pixel-for-pixel.
+function slider(a, b, la, lb, pixelated) {
+  return `<div class="cmp ${pixelated ? 'pixelated' : ''}">
+    <img src="${b}"><div class="top"><img src="${a}"></div>
+    <div class="bar"></div><span class="tag" style="left:8px">${la}</span><span class="tag" style="right:8px">${lb}</span></div>
+    <p class="hint">Drag across the image to move the divider.</p>`;
+}
+function bindSlider(el) {
+  const top = el.querySelector('.top'), bar = el.querySelector('.bar');
+  const set = x => { const r = el.getBoundingClientRect(); const p = Math.min(100, Math.max(0, (x - r.left) / r.width * 100));
+    top.style.clipPath = `inset(0 ${100 - p}% 0 0)`; bar.style.left = p + '%'; };
+  let down = false;
+  el.onpointerdown = e => { down = true; el.setPointerCapture(e.pointerId); set(e.clientX); };
+  el.onpointermove = e => down && set(e.clientX);
+  el.onpointerup = () => down = false;
+}
+
+function zoomView(v, inp, out) {
+  v.innerHTML = `<div class="vctl"><span class="hint">Zoom</span><input id="zf" type="range" min="1" max="8" step="0.5" value="3"><span id="zfv" class="mono">3×</span></div>
+    <p class="hint">Hover/click on either side to inspect the same region.</p>
+    <div class="sbs"><figure><figcaption>Input (upscaled to output size)</figcaption><div class="zoomwrap" id="za"><img src="${inp}"></div></figure>
+    <figure><figcaption>Output</figcaption><div class="zoomwrap" id="zb"><img src="${out}"></div></figure></div>`;
+  const W = job.output_meta.width, H = job.output_meta.height;
+  let fx = .5, fy = .5;
+  const apply = () => {
+    const z = +$('zf').value; $('zfv').textContent = z + '×';
+    for (const id of ['za', 'zb']) {
+      const box = $(id), img = box.querySelector('img'), s = box.clientWidth;
+      const scale = z * s / W;  // output width maps to z * box width
+      img.style.width = W + 'px'; img.style.height = H + 'px';
+      img.style.transform = `translate(${s / 2 - fx * W * scale}px, ${s / 2 - fy * H * scale}px) scale(${scale})`;
+    }
+  };
+  for (const id of ['za', 'zb']) $(id).onpointermove = e => {
+    const r = $(id).getBoundingClientRect(); fx = (e.clientX - r.left) / r.width; fy = (e.clientY - r.top) / r.height; apply();
+  };
+  $('zf').oninput = apply;
+  setTimeout(apply, 50);
+}
+
+// One control bar drives both videos; output follows input's clock.
+function syncedVideos(v, inp, out) {
+  v.innerHTML = `<div class="sbs"><figure><figcaption>Input</figcaption><video id="va" src="${inp}" muted playsinline preload="auto"></video></figure>
+    <figure><figcaption>Output</figcaption><video id="vb" src="${out}" muted playsinline preload="auto"></video></figure></div>
+    ${videoControls()}`;
+  bindVideoControls($('va'), $('vb'));
+}
+function videoWipe(v, inp, out) {
+  v.innerHTML = `<div class="cmp"><video id="vb" src="${out}" muted playsinline preload="auto" style="display:block;width:100%"></video>
+    <div class="top"><video id="va" src="${inp}" muted playsinline preload="auto" style="width:100%;height:100%;object-fit:fill"></video></div>
+    <div class="bar"></div><span class="tag" style="left:8px">Input</span><span class="tag" style="right:8px">SeedVR2</span></div>
+    ${videoControls()}`;
+  bindSlider(v.querySelector('.cmp'));
+  bindVideoControls($('va'), $('vb'));
+}
+function videoControls() {
+  return `<div class="vctl"><button id="vplay">▶ Play both</button>
+    <button class="ghost" id="vstep" title="Next frame">⏭ Frame</button>
+    <input id="vseek" type="range" min="0" max="1000" value="0"><span id="vtime" class="mono">0.00s</span>
+    <select id="vrate" style="width:auto"><option value="0.25">0.25×</option><option value="0.5">0.5×</option><option value="1" selected>1×</option></select>
+    <label style="margin:0;display:flex;gap:4px;align-items:center"><input id="vloop" type="checkbox" checked>loop</label></div>`;
+}
+function bindVideoControls(a, b) {
+  const vids = [a, b], fps = job.input_meta?.fps || 25;
+  const dur = () => Math.min(a.duration || 0, b.duration || 0) || a.duration || 0;
+  const playing = () => !a.paused;
+  const update = () => { $('vplay').textContent = playing() ? '⏸ Pause both' : '▶ Play both';
+    $('vtime').textContent = a.currentTime.toFixed(2) + 's'; if (dur()) $('vseek').value = a.currentTime / dur() * 1000; };
+  const seek = t => vids.forEach(x => x.currentTime = t);
+  $('vplay').onclick = () => {
+    if (playing()) vids.forEach(x => x.pause());
+    else { if (a.currentTime >= dur() - 0.05) seek(0); b.currentTime = a.currentTime; vids.forEach(x => x.play()); }
+  };
+  $('vstep').onclick = () => { vids.forEach(x => x.pause()); seek(Math.min(dur(), a.currentTime + 1 / fps)); };
+  $('vseek').oninput = e => { seek(e.target.value / 1000 * dur()); };
+  $('vrate').onchange = e => vids.forEach(x => x.playbackRate = +e.target.value);
+  a.ontimeupdate = () => { if (Math.abs(b.currentTime - a.currentTime) > 0.08) b.currentTime = a.currentTime; update(); };
+  a.onplay = a.onpause = update;
+  a.onended = () => { if ($('vloop').checked) { seek(0); vids.forEach(x => x.play()); } else { b.pause(); update(); } };
+}
+
+function renderMeta() {
+  $('metaPanel').classList.remove('hidden');
+  const q = x => x && x.tier ? { 'quality tier': x.tier, 'overall': x.overall, 'sharpness': `${x.sharpness_label} (${x.sharpness})`,
+    'noise': `${x.noise_label} (σ ${x.noise_sigma})`, 'blockiness': x.blockiness, 'bits/pixel': x.bits_per_pixel } : {};
+  const i = { ...job.input_meta, ...q(job.input_quality) }, o = { ...job.output_meta, ...q(job.output_quality) };
+  const keys = [...new Set([...Object.keys(i), ...Object.keys(o)])];
+  $('metaTable').innerHTML = `<tr><th>Metadata</th><th>Input</th><th>Output</th></tr>` +
+    keys.map(k => `<tr><td>${k}</td><td class="num">${i[k] ?? '–'}</td><td class="num ${String(i[k]) !== String(o[k]) ? 'chg' : ''}">${o[k] ?? '–'}</td></tr>`).join('');
+  const labels = { elapsed_s: 'Time (s)', peak_gpu_vram_mb: 'Peak GPU VRAM (MB)', scale_x: 'Scale factor', sec_per_frame: 'Sec / frame',
+    psnr_vs_bicubic_db: 'PSNR vs bicubic (dB)', ssim_vs_bicubic: 'SSIM vs bicubic', sharpness_bicubic: 'Sharpness (Laplacian var) – bicubic',
+    sharpness_output: 'Sharpness (Laplacian var) – output', mean_abs_diff: 'Mean |diff| (0–255)', exit_code: 'Exit code' };
+  $('statsTable').innerHTML = Object.entries(job.stats || {}).map(([k, v]) => `<tr><td>${labels[k] || k}</td><td class="num">${v}</td></tr>`).join('') +
+    Object.entries(job.params || {}).map(([k, v]) => `<tr><td class="hint">param: ${k}</td><td class="num">${v === '' ? '–' : v}</td></tr>`).join('');
+  $('cmd').textContent = job.cmd || '';
+}
+</script>
+</body>
+</html>

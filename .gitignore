@@ -1,0 +1,30 @@
+# Self-contained trial folder: only the UI code, env script and docs are worth versioning.
+
+# Python environment and caches (HF_HOME, TORCH_HOME, pip, tmp)
+venv/
+cache/
+__pycache__/
+*.py[cod]
+
+# Model weights (~17 GB) – re-download per README
+models/
+*.safetensors
+*.gguf
+*.pth
+
+# Upstream runner is its own git clone (ComfyUI-SeedVR2_VideoUpscaler)
+src/
+
+# Generated runs, uploads, job state and logs
+output/
+
+# Test media
+input/images/*
+input/videos/*
+!input/**/.gitkeep
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+*.swp
