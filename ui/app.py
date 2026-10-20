@@ -1,6 +1,7 @@
 """Minimal test UI for SeedVR2: upload image/video, run inference_cli.py, compare input vs output.
 
 Run:  source ./env.sh && python ui/app.py   ->  http://127.0.0.1:7860
+Scripts: REST API under /api/v1 (see README) or the client in ./seedvr2.py
 """
 import json
 import math
@@ -17,7 +18,7 @@ from pathlib import Path
 
 import uvicorn
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -1203,6 +1204,106 @@ def delete(job_id: str):
     return {"ok": True}
 
 
+# ---------- programmatic API (v1): one call per file, same queue / RAM cap as the UI ----------
+# A target fits the output inside a standard box in the source's orientation:
+# short side -> short, long side capped at long (16:9 "4k" = 3840x2160, 4:3 = 2880x2160, portrait = 2160x3840).
+TARGETS = {"720p": (720, 1280), "1080p": (1080, 1920), "1440p": (1440, 2560), "2k": (1440, 2560),
+           "2160p": (2160, 3840), "4k": (2160, 3840)}
+
+
+def api_job(job_id: str) -> dict:
+    job = jobs.get(job_id)
+    if not job:
+        raise HTTPException(404, "Unknown job id")
+    return job
+
+
+def api_view(job: dict) -> dict:
+    j = job_view(job)
+    out = j.get("output_meta") or {}
+    v = {k: j.get(k) for k in ("id", "type", "status", "error", "created", "finished")}
+    v.update(file=j["params"].get("file"), resolution=j["params"].get("resolution"),
+             max_resolution=j["params"].get("max_resolution"), percent=(j.get("progress") or {}).get("percent"),
+             eta_s=(j.get("progress") or {}).get("eta_s"), queue_position=j.get("queue_position"),
+             width=out.get("width"), height=out.get("height"),
+             elapsed_s=(j.get("stats") or {}).get("elapsed_s"), status_url=f"/api/v1/jobs/{j['id']}")
+    if j["status"] == "done":
+        v["result_url"] = f"/api/v1/jobs/{j['id']}/result"
+    return v
+
+
+def result_path(job: dict) -> Path:
+    if job["status"] != "done" or not job.get("output_url"):
+        raise HTTPException(409, f"Job is {job['status']}, no result yet")
+    return job_dir(job["id"]) / Path(job["output_url"]).name
+
+
+@app.get("/api/v1/targets")
+def api_targets():
+    return [{"name": k, "short_side": s, "long_side_max": l} for k, (s, l) in TARGETS.items()]
+
+
+@app.post("/api/v1/upscale")
+def api_upscale(
+    file: UploadFile = File(...),
+    target: str = Form("4k"),
+    resolution: int = Form(0),
+    max_resolution: int = Form(-1),
+    dit_model: str = Form(DEFAULT_PARAMS["dit_model"]),
+    seed: int = Form(42),
+    color_correction: str = Form("lab"),
+    batch_size: int = Form(5),
+    wait: bool = Form(False),
+    timeout: float = Form(3600),
+):
+    """Queue one image/video. resolution/max_resolution override the target (0 = no long-side cap).
+    wait=true blocks until done and returns the file itself; otherwise returns the job to poll."""
+    if resolution <= 0:
+        if target.lower() not in TARGETS:
+            raise HTTPException(400, f"Unknown target {target!r}; use one of {sorted(TARGETS)} or pass resolution")
+        resolution, cap = TARGETS[target.lower()]
+        max_resolution = cap if max_resolution < 0 else max_resolution
+    max_resolution = max(0, max_resolution)
+    ext = Path(file.filename or "").suffix.lower()
+    if ext not in IMAGE_EXT | VIDEO_EXT:
+        raise HTTPException(400, f"Unsupported file type: {ext}")
+    upload_id = uuid.uuid4().hex[:10]
+    with (UPLOADS_DIR / f"{upload_id}{ext}").open("wb") as f:
+        shutil.copyfileobj(file.file, f)
+    try:
+        job_id = run(upload_id=upload_id, filename=file.filename or "", dit_model=dit_model, resolution=resolution,
+                     max_resolution=max_resolution, batch_size=batch_size, seed=seed,
+                     color_correction=color_correction, blocks_to_swap=DEFAULT_PARAMS["blocks_to_swap"],
+                     vae_tiled=True, load_cap=0, chunk_size=0, extra_args="")["id"]
+    finally:
+        (UPLOADS_DIR / f"{upload_id}{ext}").unlink(missing_ok=True)  # the run dir holds its own copy
+    job = jobs[job_id]
+    if not wait:
+        return api_view(job)
+    deadline = time.time() + timeout
+    while job["status"] in ACTIVE and time.time() < deadline:
+        time.sleep(1)
+    if job["status"] == "done":
+        out = result_path(job)
+        return FileResponse(out, filename=f"{Path(job['params']['file']).stem}_{target.lower()}{out.suffix}",
+                            headers={"X-Job-Id": job_id})
+    if job["status"] in ACTIVE:  # timed out: still running, poll status_url
+        return JSONResponse(api_view(job), status_code=202)
+    return JSONResponse(api_view(job), status_code=500)
+
+
+@app.get("/api/v1/jobs/{job_id}")
+def api_status(job_id: str):
+    return api_view(api_job(job_id))
+
+
+@app.get("/api/v1/jobs/{job_id}/result")
+def api_result(job_id: str):
+    job = api_job(job_id)
+    out = result_path(job)
+    return FileResponse(out, filename=f"{Path(job['params']['file']).stem}_{job['params']['resolution']}p{out.suffix}")
+
+
 @app.get("/")
 def index():
     return FileResponse(Path(__file__).parent / "static" / "index.html")
@@ -1213,4 +1314,4 @@ app.mount("/runs", StaticFiles(directory=RUNS_DIR), name="runs")
 if __name__ == "__main__":
     load_jobs()
     threading.Thread(target=worker, daemon=True).start()
-    uvicorn.run(app, host="127.0.0.1", port=int(os.environ.get("PORT", 7860)))
+    uvicorn.run(app, host=os.environ.get("HOST", "127.0.0.1"), port=int(os.environ.get("PORT", 7860)))
