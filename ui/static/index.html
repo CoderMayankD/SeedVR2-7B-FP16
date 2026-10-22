@@ -286,7 +286,7 @@ function refreshPlan() {
         <span>Output</span><span>${e.out_w}×${e.out_h} (${e.megapixels} MP, ${e.scale}×)${vid ? ` · ${e.frames} frames` : ''}</span>
         <span>Time</span><span><b>≈ ${e.time}</b> (model load ≈${e.model_load_s}s${e.cold_load ? ', first load from disk' : ''})</span>
         ${vid ? `<span>Chunks</span><span>${e.chunks} × ${e.chunk_size} frames · ${e.batches} batches · overlap ${e.temporal_overlap}</span>` : ''}
-        <span>RAM peak</span><span>≈ ${gb(e.ram_peak_gb)} (model ${gb(e.ram_model_gb)}) · free ${gb(e.ram_free_gb)} of ${gb(e.ram_total_gb)}</span>
+        <span>RAM peak</span><span>≈ ${gb(e.ram_peak_gb)} (model ${gb(e.ram_model_gb)}) · job may use ${gb(e.ram_limit_gb)} (free ${gb(e.ram_free_gb)} of ${gb(e.ram_total_gb)})</span>
         <span>VRAM peak</span><span>≈ ${gb(e.vram_gb)} of ${gb(e.vram_total_gb)}</span>
         <span>Disk</span><span>output ≈ ${gb(e.output_gb)}${vid ? ` + temp ≈ ${gb(e.temp_disk_gb)}` : ''} · free ${gb(e.disk_free_gb)}</span>
       </div>${limList(e)}`;

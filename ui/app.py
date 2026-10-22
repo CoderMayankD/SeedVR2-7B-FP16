@@ -43,7 +43,11 @@ app = FastAPI()
 GB = 1024 ** 3
 BYTES_PER_OUT_PX = 60     # measured ≈45 B per output pixel per chunk frame at 1080p (+ margin): decoded, assembled, colour-fixed copies
 MAX_CHUNK = 60            # longer chunks barely speed things up, raise the RAM peak and lose more on a crash
-RAM_HEADROOM = 4 * GB     # left for the desktop / browser
+RAM_HEADROOM = 4 * GB     # a job never gets more than MemTotal minus this
+FREE_RAM_RESERVE = GB     # free RAM left outside a job's cap; MemAvailable already excludes what the desktop holds
+VRAM_MARGIN_GB = 1.5      # free VRAM a job must leave; the re-run of the 20:37 crash still hit allocation failures
+UNTILED_VAE_MAX_MP = 2.5  # untiled VAE at 4.7 MP (4K image) hard-locked the machine
+RUNTIME_RAM = int(1.5 * GB)  # python + torch + CUDA context, on top of the weights
 
 
 def mem_info() -> dict:
@@ -75,9 +79,36 @@ def usable_ram() -> int:
     return mem_info()["MemAvailable"] + held
 
 
+def usable_vram_gb() -> float | None:
+    """Free VRAM, counting memory held by any running SeedVR2 CLI. The desktop's share is not freed, so it counts as used."""
+    try:
+        used, total = (int(x) for x in subprocess.run(
+            ["nvidia-smi", "--query-gpu=memory.used,memory.total", "--format=csv,noheader,nounits"],
+            capture_output=True, text=True, timeout=5).stdout.splitlines()[0].split(","))
+        apps = subprocess.run(["nvidia-smi", "--query-compute-apps=pid,used_memory", "--format=csv,noheader,nounits"],
+                              capture_output=True, text=True, timeout=5).stdout
+    except Exception:  # noqa: BLE001
+        return None
+    held = 0
+    for line in apps.splitlines():
+        try:
+            pid, mb = (x.strip() for x in line.split(","))
+            if b"inference_cli.py" in Path(f"/proc/{pid}/cmdline").read_bytes():
+                held += int(mb)
+        except (OSError, ValueError):
+            pass
+    return (total - used + held) / 1024
+
+
+def job_ram_limit() -> int:
+    """Hard RAM cap a job runs under (see memory_capped). An overrun kills only the job, so this is also the
+    most a job may need – subtracting RAM_HEADROOM from free RAM as well blocked 17 GB jobs with 18 GB free."""
+    return min(mem_info()["MemTotal"] - RAM_HEADROOM, usable_ram() - FREE_RAM_RESERVE)
+
+
 def auto_chunk(out_w: int, out_h: int, batch_size: int, dit_model: str) -> int:
-    """Largest chunk (multiple of batch_size) whose frames fit in available RAM."""
-    budget = usable_ram() - model_ram_bytes(dit_model) - RAM_HEADROOM
+    """Largest chunk (multiple of batch_size) whose frames fit in the job's RAM cap."""
+    budget = job_ram_limit() - model_ram_bytes(dit_model) - RUNTIME_RAM
     per_frame = out_w * out_h * BYTES_PER_OUT_PX
     frames = max(batch_size, min(MAX_CHUNK, int(budget // per_frame)))
     return max(batch_size, frames // batch_size * batch_size)
@@ -94,10 +125,11 @@ def output_size(w: int, h: int, resolution: int, max_resolution: int) -> tuple[i
 def memory_capped(cmd: list[str]) -> tuple[list[str], int]:
     """Run inside a systemd scope with a hard RAM limit so an overrun kills only this job,
     instead of driving the desktop into swap until it freezes."""
-    limit = mem_info()["MemTotal"] - RAM_HEADROOM
+    # MemTotal alone ignored what the desktop / docker already hold, so the machine ran out before the job hit its cap.
+    limit = job_ram_limit()
     if shutil.which("systemd-run"):
         return ["systemd-run", "--user", "--scope", "--quiet", "-p", f"MemoryMax={limit}",
-                "-p", "MemorySwapMax=1G", *cmd], limit
+                "-p", "MemorySwapMax=0", *cmd], limit
     return cmd, 0
 
 
@@ -160,7 +192,7 @@ def estimate(meta: dict, is_video: bool, p: dict) -> dict:
     mem = mem_info()
 
     # RAM and chunking
-    model_ram = dit_bytes + GB // 2 + int(1.5 * GB)   # DiT + VAE + python/torch
+    model_ram = dit_bytes + GB // 2 + RUNTIME_RAM   # DiT + VAE + python/torch
     per_frame = out_w * out_h * BYTES_PER_OUT_PX
     chunk = p.get("chunk_size") or 0
     if is_video and chunk <= 0:
@@ -189,6 +221,9 @@ def estimate(meta: dict, is_video: bool, p: dict) -> dict:
                                         capture_output=True, text=True, timeout=5).stdout.split()[0]) / 1024
     except Exception:  # noqa: BLE001
         pass
+    vram_free = usable_vram_gb() or vram_total
+    ram_free = usable_ram()
+    ram_limit = job_ram_limit()
 
     # disk
     out_bytes = out_w * out_h * frames * (OUT_BITS_PER_PX / 8 if is_video else 1.3)
@@ -204,15 +239,21 @@ def estimate(meta: dict, is_video: bool, p: dict) -> dict:
                       "from the original). Two passes of ≤2.5× look more natural.")
     elif scale > 2.5:
         limits.append(f"{scale:.1f}× jump: expect invented texture; small text and faces may not match the source.")
-    if ram_peak > mem["MemTotal"] - RAM_HEADROOM:
-        blockers.append(f"Needs ≈{ram_peak / GB:.0f} GB RAM even with the smallest chunk – more than this machine can "
-                        "spare. Use a lower resolution or the 3B model.")
+    if ram_peak > ram_limit:
+        blockers.append(f"Needs ≈{ram_peak / GB:.1f} GB RAM, but the job can only get {ram_limit / GB:.1f} GB "
+                        f"({ram_free / GB:.1f} GB free, {FREE_RAM_RESERVE // GB} GB kept for the desktop). "
+                        "Close other apps (browser tabs, Docker), or use the 3B model.")
+    elif ram_peak > ram_limit - 2 * GB:
+        limits.append(f"Tight on RAM ({ram_peak / GB:.1f} of {ram_limit / GB:.1f} GB) – don't open heavy apps while it "
+                      "runs; if RAM runs short, the job is killed, not the desktop.")
     elif is_video and chunk <= b and frames > b:
         limits.append(f"Free RAM only fits {chunk} frames per chunk – close other apps (browser tabs) for faster runs.")
-    if vram > vram_total - 0.5:
-        (blockers if swap < 36 else limits).append(
-            f"Estimated ≈{vram:.1f} GB VRAM of {vram_total:.0f} GB – risk of GPU out-of-memory. "
-            + ("Raise blocks to swap to 36." if swap < 36 else "Use a smaller batch size or lower resolution."))
+    if not p.get("vae_tiled", True) and mp * b > UNTILED_VAE_MAX_MP:
+        blockers.append(f"Untiled VAE at {mp * b:.1f} MP can freeze the whole machine – enable tiled VAE.")
+    if vram > vram_free - VRAM_MARGIN_GB:
+        blockers.append(
+            f"Estimated ≈{vram:.1f} GB VRAM, only {vram_free:.1f} GB free – risk of freezing the GPU/desktop. "
+            + ("Raise blocks to swap to 36." if swap < 36 else "Use tiled VAE, a smaller batch size or lower resolution."))
     if out_bytes + tmp_bytes > disk_free - 2 * GB:
         blockers.append(f"Needs ≈{(out_bytes + tmp_bytes) / GB:.1f} GB disk, only {disk_free / GB:.1f} GB free.")
     if is_video:
@@ -232,7 +273,7 @@ def estimate(meta: dict, is_video: bool, p: dict) -> dict:
         "chunk_size": chunk if is_video else None, "chunks": chunks if is_video else None,
         "batches": batches if is_video else None, "temporal_overlap": overlap if is_video else None,
         "ram_peak_gb": round(ram_peak / GB, 1), "ram_model_gb": round(model_ram / GB, 1),
-        "ram_free_gb": round(usable_ram() / GB, 1), "ram_total_gb": round(mem["MemTotal"] / GB, 1),
+        "ram_free_gb": round(ram_free / GB, 1), "ram_limit_gb": round(ram_limit / GB, 1), "vram_free_gb": round(vram_free, 1), "ram_total_gb": round(mem["MemTotal"] / GB, 1),
         "vram_gb": round(vram, 1), "vram_total_gb": round(vram_total, 1),
         "output_gb": round(out_bytes / GB, 2), "temp_disk_gb": round(tmp_bytes / GB, 2),
         "disk_free_gb": round(disk_free / GB, 1),
@@ -867,6 +908,13 @@ def worker():
             continue  # queued jobs stay queued on disk and are picked up again on next start
         worker_idle.clear()
         try:
+            # Free RAM/VRAM may have shrunk while the job waited in the queue (or across a reboot): check again.
+            est = estimate(probe(job_dir(job["id"]) / job["input_name"]), job["type"] == "video", job["params"])
+            if not est["ok"]:
+                msg = "Rejected before start – " + " ".join(est["blockers"])
+                log(job, msg)
+                update(job, status="error", error=msg)
+                continue
             (run_video if job["type"] == "video" else run_image)(job)
         except Exception as e:  # noqa: BLE001
             log(job, f"UI error: {e!r}")
